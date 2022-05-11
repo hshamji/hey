@@ -16,10 +16,12 @@
 package requester
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/tls"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
@@ -92,6 +94,8 @@ type Work struct {
 	// Writer is where results will be written. If nil, results are written to stdout.
 	Writer io.Writer
 
+	ResponseBuffer *bufio.Writer
+
 	initOnce sync.Once
 	results  chan *result
 	stopCh   chan struct{}
@@ -113,6 +117,21 @@ func (b *Work) Init() {
 		b.results = make(chan *result, min(b.C*1000, maxResult))
 		b.stopCh = make(chan struct{}, b.C)
 	})
+	// If file exists delete and recreate, else create
+	fname := "output.txt"
+	if _, err := os.Stat(fname); err != nil {
+		os.Remove(fname)
+	}
+	os.Stdout.Write([]byte("Print this once"))
+	os.Create(fname)
+
+	file, err := os.OpenFile(fname, os.O_WRONLY, 0666)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	b.ResponseBuffer = bufio.NewWriter(file)
+
 }
 
 // Run makes all the requests, prints the summary. It blocks until
@@ -183,6 +202,15 @@ func (b *Work) makeRequest(c *http.Client) {
 	}
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 	resp, err := c.Do(req)
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(resp.Body)
+	os.Stdout.Write([]byte(buf.String()))
+
+	// b.ResponseBuffer.Write([]byte(resp.Status))
+	// b.ResponseBuffer.Write([]byte("\n"))
+	b.ResponseBuffer.WriteString(time.Now().String() + ": \t" + resp.Status + "\n")
+	b.ResponseBuffer.Flush()
+
 	if err == nil {
 		size = resp.ContentLength
 		code = resp.StatusCode
